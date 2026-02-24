@@ -1,0 +1,6 @@
+project_id                    = "your-gcp-project-id"
+region                        = "us-central1"
+artifact_registry_repo        = "vertex-agents"
+matching_engine_index_name    = "agent-vector-index"
+matching_engine_endpoint_name = "agent-vector-endpoint"
+vector_dimensions             = 768

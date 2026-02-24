@@ -1,0 +1,133 @@
+# Vertex AI Pipeline – end-to-end embedding & index update pipeline
+# Compiled from src/pipelines/__init__.py via: python -m src.pipelines --compile-only
+# This YAML is submitted to Vertex AI Pipelines via the Vertex AI SDK or
+# the `scripts/run_pipeline.sh` helper.
+
+pipelineInfo:
+  name: vertex-agent-embedding-pipeline
+  description: >
+    Ingests raw documents, generates text embeddings using
+    textembedding-gecko, upserts vectors into Vertex AI
+    Matching Engine, and registers the updated model artifact.
+
+runtimeConfig:
+  gcsOutputDirectory: "{{$.pipeline_root}}"
+  parameterValues:
+    project_id:
+      stringValue: "your-gcp-project-id"
+    location:
+      stringValue: "us-central1"
+    input_gcs_uri:
+      stringValue: "gs://your-project-vertex-staging/raw-documents/"
+    output_gcs_uri:
+      stringValue: "gs://your-project-vertex-staging/embeddings/"
+    embedding_model:
+      stringValue: "textembedding-gecko@003"
+    batch_size:
+      intValue: 100
+    index_endpoint_id:
+      stringValue: "your-index-endpoint-id"
+    deployed_index_id:
+      stringValue: "your-deployed-index-id"
+
+components:
+  comp-ingest-documents:
+    executorLabel: exec-ingest-documents
+    inputDefinitions:
+      parameters:
+        project_id: {parameterType: STRING}
+        input_gcs_uri: {parameterType: STRING}
+    outputDefinitions:
+      artifacts:
+        documents_dataset:
+          artifactType: {schemaTitle: system.Dataset, schemaVersion: 0.0.1}
+
+  comp-generate-embeddings:
+    executorLabel: exec-generate-embeddings
+    inputDefinitions:
+      parameters:
+        project_id: {parameterType: STRING}
+        location: {parameterType: STRING}
+        embedding_model: {parameterType: STRING}
+        batch_size: {parameterType: INTEGER}
+        output_gcs_uri: {parameterType: STRING}
+      artifacts:
+        documents_dataset:
+          artifactType: {schemaTitle: system.Dataset, schemaVersion: 0.0.1}
+    outputDefinitions:
+      artifacts:
+        embeddings_dataset:
+          artifactType: {schemaTitle: system.Dataset, schemaVersion: 0.0.1}
+
+  comp-upsert-index:
+    executorLabel: exec-upsert-index
+    inputDefinitions:
+      parameters:
+        project_id: {parameterType: STRING}
+        location: {parameterType: STRING}
+        index_endpoint_id: {parameterType: STRING}
+        deployed_index_id: {parameterType: STRING}
+      artifacts:
+        embeddings_dataset:
+          artifactType: {schemaTitle: system.Dataset, schemaVersion: 0.0.1}
+    outputDefinitions:
+      parameters:
+        num_upserted: {parameterType: INTEGER}
+
+  comp-register-model:
+    executorLabel: exec-register-model
+    inputDefinitions:
+      parameters:
+        project_id: {parameterType: STRING}
+        location: {parameterType: STRING}
+        deployed_index_id: {parameterType: STRING}
+        num_upserted: {parameterType: INTEGER}
+
+deploymentSpec:
+  executors:
+    exec-ingest-documents:
+      container:
+        image: "us-central1-docker.pkg.dev/your-project/vertex-agents/vertex-agent:latest"
+        command: ["python", "-m", "src.pipelines.steps.ingest"]
+        args:
+          - "--project_id={{$.inputs.parameters['project_id']}}"
+          - "--input_gcs_uri={{$.inputs.parameters['input_gcs_uri']}}"
+          - "--output_path={{$.outputs.artifacts['documents_dataset'].path}}"
+
+    exec-generate-embeddings:
+      container:
+        image: "us-central1-docker.pkg.dev/your-project/vertex-agents/vertex-agent:latest"
+        command: ["python", "-m", "src.pipelines.steps.embed"]
+        args:
+          - "--project_id={{$.inputs.parameters['project_id']}}"
+          - "--location={{$.inputs.parameters['location']}}"
+          - "--embedding_model={{$.inputs.parameters['embedding_model']}}"
+          - "--batch_size={{$.inputs.parameters['batch_size']}}"
+          - "--input_path={{$.inputs.artifacts['documents_dataset'].path}}"
+          - "--output_gcs_uri={{$.inputs.parameters['output_gcs_uri']}}"
+          - "--output_path={{$.outputs.artifacts['embeddings_dataset'].path}}"
+
+    exec-upsert-index:
+      container:
+        image: "us-central1-docker.pkg.dev/your-project/vertex-agents/vertex-agent:latest"
+        command: ["python", "-m", "src.pipelines.steps.upsert"]
+        args:
+          - "--project_id={{$.inputs.parameters['project_id']}}"
+          - "--location={{$.inputs.parameters['location']}}"
+          - "--index_endpoint_id={{$.inputs.parameters['index_endpoint_id']}}"
+          - "--deployed_index_id={{$.inputs.parameters['deployed_index_id']}}"
+          - "--embeddings_path={{$.inputs.artifacts['embeddings_dataset'].path}}"
+          - "--output_num_upserted={{$.outputs.parameters['num_upserted'].output_file}}"
+
+    exec-register-model:
+      container:
+        image: "us-central1-docker.pkg.dev/your-project/vertex-agents/vertex-agent:latest"
+        command: ["python", "-m", "src.pipelines.steps.register"]
+        args:
+          - "--project_id={{$.inputs.parameters['project_id']}}"
+          - "--location={{$.inputs.parameters['location']}}"
+          - "--deployed_index_id={{$.inputs.parameters['deployed_index_id']}}"
+          - "--num_upserted={{$.inputs.parameters['num_upserted']}}"
+
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.4.0
